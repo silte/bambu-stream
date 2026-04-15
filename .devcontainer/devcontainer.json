@@ -1,0 +1,39 @@
+{
+  "name": "bambu-stream-dev",
+  "build": {
+    "context": "..",
+    "dockerfile": "Dockerfile"
+  },
+  "containerUser": "vscode",
+  "remoteUser": "vscode",
+  "updateRemoteUserUID": true,
+  "init": true,
+  "runArgs": ["--cap-drop=ALL", "--security-opt=no-new-privileges:true"],
+  "overrideCommand": true,
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "Bambu Stream App",
+      "onAutoForward": "notify"
+    }
+  },
+  "containerEnv": {
+    "PORT": "8000",
+    "LOG_LEVEL": "INFO",
+    "TZ": "UTC"
+  },
+  "postCreateCommand": "python -m venv .venv && . .venv/bin/activate && pip install --no-cache-dir -r requirements.txt",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python"
+      },
+      "extensions": [
+        "github.copilot",
+        "github.copilot-chat",
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  }
+}
