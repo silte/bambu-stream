@@ -25,6 +25,15 @@ _QUEUE_MAX = 64
 _URL_CREDENTIALS_RE = re.compile(
     r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.-]*://)(?P<creds>[^/@\s]+)@"
 )
+_TRANSIENT_FFMPEG_MESSAGES = (
+    "error in the push function",
+    "error in the pull function",
+    "io error:",
+    "connection reset by peer",
+    "end of file",
+    "session has been invalidated",
+    "error during demuxing: input/output error",
+)
 
 
 class StreamConfig:
@@ -184,6 +193,13 @@ class StreamManager:
         logger.info("Viewer %d disconnected (remaining viewers: %d)",
                     viewer_id, remaining)
         if remaining == 0:
+            if not self._connected and self._task and not self._task.done():
+                logger.info(
+                    "No viewers and upstream is disconnected — pausing reconnect loop"
+                )
+                self._task.cancel()
+                return
+
             if self._idle_disconnect_task and not self._idle_disconnect_task.done():
                 self._idle_disconnect_task.cancel()
             logger.info(
@@ -248,6 +264,26 @@ class StreamManager:
         return sanitized
 
     @staticmethod
+    def _is_transient_ffmpeg_disconnect(stderr_text: str) -> bool:
+        """Return True for known RTSP/TLS disconnect messages from Bambu streams."""
+        lower = (stderr_text or "").lower()
+        return any(msg in lower for msg in _TRANSIENT_FFMPEG_MESSAGES)
+
+    @staticmethod
+    def _summarize_ffmpeg_stderr(stderr_text: str) -> str:
+        """Extract a compact one-line reason from FFmpeg stderr output."""
+        lines = [line.strip()
+                 for line in (stderr_text or "").splitlines() if line.strip()]
+        if not lines:
+            return "unknown upstream disconnect"
+
+        for line in reversed(lines):
+            lower = line.lower()
+            if any(msg in lower for msg in _TRANSIENT_FFMPEG_MESSAGES):
+                return line
+        return lines[-1]
+
+    @staticmethod
     def _is_rtsp(url: str) -> bool:
         return url.lower().startswith(("rtsp://", "rtsps://"))
 
@@ -288,10 +324,17 @@ class StreamManager:
                     self._connected = False
                     self._broadcast(None)
                 self._last_error = self._sanitize_error(str(exc))
-                logger.error("Upstream error: %s", exc)
+                logger.error("Upstream error: %s", self._last_error)
 
             if not self.config.auto_reconnect:
                 logger.info("AUTO_RECONNECT=false — upstream loop exiting")
+                break
+
+            # Avoid reconnect churn while no one is watching.
+            if len(self._viewers) == 0:
+                logger.info(
+                    "No active viewers — upstream reconnect paused until next viewer"
+                )
                 break
 
             self._reconnect_count += 1
@@ -367,11 +410,13 @@ class StreamManager:
         self._last_error = None
         logger.info("FFmpeg started  content-type=%s", self._content_type)
 
+        bytes_streamed = 0
         try:
             while True:
                 chunk = await proc.stdout.read(4096)
                 if not chunk:
                     break
+                bytes_streamed += len(chunk)
                 self._broadcast(chunk)
         finally:
             if proc.returncode is None:
@@ -383,8 +428,18 @@ class StreamManager:
 
             stderr = await proc.stderr.read()
             if stderr:
-                logger.error("FFmpeg stderr: %s", stderr.decode(
-                    errors="replace").strip())
+                decoded = stderr.decode(errors="replace").strip()
+                sanitized = self._sanitize_error(decoded)
+                summary = self._summarize_ffmpeg_stderr(sanitized)
+                if self._is_transient_ffmpeg_disconnect(decoded):
+                    logger.warning("FFmpeg upstream disconnect: %s", summary)
+                else:
+                    logger.error("FFmpeg stderr: %s", sanitized)
+
+            if proc.returncode not in (0, None) and bytes_streamed == 0:
+                raise RuntimeError(
+                    f"FFmpeg exited before producing stream (code {proc.returncode})"
+                )
 
     # ------------------------------------------------------------------
     # Public state / headers
