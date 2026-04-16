@@ -48,10 +48,7 @@ runs:
           ${{ inputs.RELEASE_NAME }}        \
           helm                              \
           --install                         \
-          --create-namespace                \
           --atomic                          \
           --wait                            \
           --timeout ${{ inputs.TIMEOUT }}s  \
-          --set application.image.registry=ghcr.io \
-          --set application.image.repository=${{ github.repository }} \
           --set application.image.tag=${{ steps.image-tag.outputs.TAG }}

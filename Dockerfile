@@ -21,6 +21,8 @@ COPY --chown=app:app stream_manager.py .
 COPY --chown=app:app mqtt_probe.py .
 COPY --chown=app:app index.html .
 COPY --chown=app:app error.html .
+# Bundle the Bambu CA certificate used for MQTT TLS verification.
+COPY bambu_p2s_250626.cert .
 
 USER app
 
@@ -31,6 +33,7 @@ EXPOSE 8000
 ENV APP_TITLE="Bambu P2S Live" \
     PORT=8000 \
     LOG_LEVEL=INFO \
+    MQTT_TLS_CA_CERT=/app/bambu_p2s_250626.cert \
     TZ=UTC
 
 # Run the app
