@@ -6,7 +6,7 @@ Helm wrapper chart using:
 dependencies:
     - name: nodejs
         alias: application
-        version: v1.0.2
+        version: v1.1.0
         repository: https://charts.silte.fi
 ```
 

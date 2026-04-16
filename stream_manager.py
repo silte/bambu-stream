@@ -10,6 +10,7 @@ with exponential backoff so the printer sees only one stream consumer.
 import asyncio
 import logging
 import os
+import re
 import time
 from typing import Dict, Optional
 
@@ -21,6 +22,9 @@ logger = logging.getLogger("stream_manager")
 _BACKOFF_SEQUENCE = [1, 2, 5, 10, 30]
 # Per-viewer queue depth. Slow viewers drop frames rather than stalling the broadcast.
 _QUEUE_MAX = 64
+_URL_CREDENTIALS_RE = re.compile(
+    r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.-]*://)(?P<creds>[^/@\s]+)@"
+)
 
 
 class StreamConfig:
@@ -63,10 +67,14 @@ class StreamConfig:
             from urllib.parse import urlparse
 
             parsed = urlparse(url)
-            if parsed.password:
+            if parsed.username:
+                host = parsed.hostname or ""
+                if ":" in host and not host.startswith("["):
+                    host = f"[{host}]"
+                port = f":{parsed.port}" if parsed.port else ""
                 return (
-                    f"{parsed.scheme}://***:***@{parsed.hostname}"
-                    f":{parsed.port or ''}{parsed.path}"
+                    f"{parsed.scheme}://***:***@{host}"
+                    f"{port}{parsed.path}"
                 )
             return url
         except Exception:
@@ -226,6 +234,19 @@ class StreamManager:
             except asyncio.QueueFull:
                 logger.debug("Dropped frame for slow viewer %d", viewer_id)
 
+    def _sanitize_error(self, value: str) -> str:
+        """Best-effort redaction for credential-bearing URLs in error text."""
+        if not value:
+            return value
+
+        sanitized = _URL_CREDENTIALS_RE.sub(r"\g<scheme>***:***@", value)
+        if self.config.stream_url:
+            sanitized = sanitized.replace(
+                self.config.stream_url, self.config._mask_url(
+                    self.config.stream_url)
+            )
+        return sanitized
+
     @staticmethod
     def _is_rtsp(url: str) -> bool:
         return url.lower().startswith(("rtsp://", "rtsps://"))
@@ -266,7 +287,7 @@ class StreamManager:
                 if self._connected:
                     self._connected = False
                     self._broadcast(None)
-                self._last_error = str(exc)
+                self._last_error = self._sanitize_error(str(exc))
                 logger.error("Upstream error: %s", exc)
 
             if not self.config.auto_reconnect:

@@ -68,7 +68,6 @@ jobs:
         uses: silte/bambu-stream/.github/actions/deploy@main
         with:
           RELEASE_NAME: bambu-stream
-          NAMESPACE: ${{ vars.K8S_NAMESPACE || 'bambu-stream' }}
           KUBE_CONFIG: ${{ env.KUBE_CONFIG_PATH }}
           TIMEOUT: 300
 

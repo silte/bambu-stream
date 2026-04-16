@@ -1,0 +1,6 @@
+dependencies:
+- name: nodejs
+  repository: https://charts.silte.fi
+  version: 1.1.0
+digest: sha256:8a605ab279b66eb06c785921011d048a361d02e3cdaec5903a56239c9ea55b1d
+generated: "2026-04-16T14:26:56.041952716+03:00"

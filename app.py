@@ -10,7 +10,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from mqtt_probe import BambuMqttProbe, MqttProbeConfig
@@ -27,12 +27,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger("bambu_stream_app")
 
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
 # ============================================================================
 # APP INITIALIZATION
 # ============================================================================
 
+
 APP_TITLE = os.getenv("APP_TITLE", "Bambu P2S Live")
 PORT = int(os.getenv("PORT", 8000))
+DEBUG_MQTT_ENDPOINT_ENABLED = _env_bool("DEBUG_MQTT_ENDPOINT_ENABLED", False)
 
 config = StreamConfig()
 stream_manager = StreamManager(config)
@@ -50,6 +59,22 @@ _ERROR_HTML = open(os.path.join(_HERE, "error.html")).read()
 
 def get_uptime_seconds() -> int:
     return int(time.time() - app_start_time)
+
+
+def _sanitize_probe_result(probe_result: dict) -> dict:
+    discovered_rtsp_url = probe_result.get("discovered_rtsp_url")
+    masked_discovered = None
+    if isinstance(discovered_rtsp_url, str) and discovered_rtsp_url:
+        masked_discovered = config._mask_url(discovered_rtsp_url)
+
+    return {
+        "ok": bool(probe_result.get("ok", False)),
+        "discovered_rtsp_url_masked": masked_discovered,
+        "message_count": probe_result.get("message_count", 0),
+        "error": probe_result.get("error"),
+        "retry_insecure_used": probe_result.get("retry_insecure_used", False),
+        "timestamp": probe_result.get("timestamp"),
+    }
 
 
 # ============================================================================
@@ -177,8 +202,10 @@ async def ws_stats(websocket: WebSocket):
                 }
             )
             await asyncio.sleep(1)
-    except (WebSocketDisconnect, Exception):
-        pass
+    except WebSocketDisconnect:
+        logger.debug("Stats WebSocket disconnected")
+    except Exception:
+        logger.exception("Unhandled error in /ws/stats")
 
 
 @app.get("/status", response_class=JSONResponse)
@@ -203,9 +230,12 @@ async def status():
 
 @app.get("/debug/mqtt", response_class=JSONResponse)
 async def debug_mqtt():
-    """Run a one-shot MQTT probe to inspect raw payloads and discover rtsp_url."""
+    """Run a one-shot MQTT probe with redacted response data."""
+    if not DEBUG_MQTT_ENDPOINT_ENABLED:
+        raise HTTPException(status_code=404, detail="Not Found")
+
     probe_result = await asyncio.to_thread(mqtt_probe.probe_once)
-    return JSONResponse(probe_result)
+    return JSONResponse(_sanitize_probe_result(probe_result))
 
 
 # ============================================================================

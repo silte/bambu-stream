@@ -80,8 +80,10 @@ docker logs -f bambu-stream
 | `MQTT_SERIAL`               | ``               | Printer serial (used in MQTT topic)            |
 | `MQTT_ACCESS_CODE`          | ``               | Printer access code (MQTT password for `bblp`) |
 | `MQTT_TIMEOUT_SECONDS`      | `10`             | Probe timeout for `/debug/mqtt` and startup    |
-| `MQTT_TLS_INSECURE`         | `true`           | Disable cert verification for printer TLS cert |
+| `MQTT_TLS_INSECURE`         | `false`          | Disable cert verification for printer TLS cert |
+| `MQTT_TLS_ALLOW_INSECURE_FALLBACK` | `false`  | Allow one-time fallback to insecure TLS when strict verification fails |
 | `MQTT_TLS_CA_CERT`          | ``               | Optional CA cert path for MQTT TLS verification |
+| `DEBUG_MQTT_ENDPOINT_ENABLED` | `false`        | Enables `GET /debug/mqtt` (disabled by default) |
 
 For Kubernetes, prefer secret keys: `MQTT_SERIAL`, `MQTT_ACCESS_CODE`, `MQTT_HOST`, `MQTT_TLS_INSECURE`, `MQTT_TLS_CA_CERT`.
 
@@ -160,6 +162,9 @@ Extended debug endpoint:
 
 ### `GET /debug/mqtt`
 
+This endpoint is **disabled by default**.
+Set `DEBUG_MQTT_ENDPOINT_ENABLED=true` to enable it.
+
 Runs a one-shot MQTT probe similar to HA's request flow:
 
 - Subscribes to `device/{serial}/report`
@@ -168,10 +173,9 @@ Runs a one-shot MQTT probe similar to HA's request flow:
 
 Response includes:
 
-- `discovered_rtsp_url`
+- `discovered_rtsp_url_masked`
 - `message_count`
-- up to 5 sample payloads
-- masked probe config and error details (if any)
+- error details (if any)
 
 When MQTT returns an RTSP/RTSPS URL without credentials, the app rewrites it to include `bblp:{MQTT_ACCESS_CODE}@...` before using it.
 
@@ -179,7 +183,7 @@ If `STREAM_URL` is not set and MQTT config is present (`MQTT_HOST`, `MQTT_SERIAL
 
 If you want strict TLS validation for MQTT, set `MQTT_TLS_INSECURE=false` and provide `MQTT_TLS_CA_CERT` (for example, a local copy of the HA cert file). This affects MQTT probing only.
 
-If strict MQTT TLS validation fails with a certificate verification error, the app automatically retries discovery once with insecure TLS and logs a warning.
+If strict MQTT TLS validation fails with a certificate verification error, the app retries discovery once with insecure TLS only when `MQTT_TLS_ALLOW_INSECURE_FALLBACK=true`.
 
 ## Logging
 

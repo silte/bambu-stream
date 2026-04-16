@@ -43,7 +43,10 @@ class MqttProbeConfig:
         self.access_code: str = os.getenv("MQTT_ACCESS_CODE", "")
         self.timeout_seconds: int = int(
             os.getenv("MQTT_TIMEOUT_SECONDS", "10"))
-        self.tls_insecure: bool = _env_bool("MQTT_TLS_INSECURE", True)
+        self.tls_insecure: bool = _env_bool("MQTT_TLS_INSECURE", False)
+        self.tls_allow_insecure_fallback: bool = _env_bool(
+            "MQTT_TLS_ALLOW_INSECURE_FALLBACK", False
+        )
         self.tls_ca_cert: str = os.getenv("MQTT_TLS_CA_CERT", "")
 
     def is_configured(self) -> bool:
@@ -66,6 +69,7 @@ class MqttProbeConfig:
             "access_code": "***" if self.access_code else "",
             "timeout_seconds": self.timeout_seconds,
             "tls_insecure": self.tls_insecure,
+            "tls_allow_insecure_fallback": self.tls_allow_insecure_fallback,
             "tls_ca_cert": self.tls_ca_cert,
             "report_topic": self.report_topic if self.serial else "",
             "request_topic": self.request_topic if self.serial else "",
@@ -257,11 +261,12 @@ class BambuMqttProbe:
         if (
             not initial["ok"]
             and not self.config.tls_insecure
+            and self.config.tls_allow_insecure_fallback
             and self._looks_like_cert_verify_error(initial.get("error", ""))
         ):
             logger.warning(
                 "MQTT TLS verification failed; retrying probe once with insecure TLS "
-                "(set MQTT_TLS_INSECURE=true to avoid this warning)"
+                "(set MQTT_TLS_ALLOW_INSECURE_FALLBACK=true to allow this behavior)"
             )
             retry_used = True
             retry = run_attempt(tls_insecure=True)
