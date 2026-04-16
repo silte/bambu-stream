@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{APP_TITLE}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+        .container { max-width: 960px; margin: 0 auto; }
+        .container.theater {
+            /* 1920 content width + 16px left/right player padding = 1952px */
+            max-width: min(98vw, 1952px);
+        }
+        h1 { font-size: 28px; margin-bottom: 20px; }
+        .player-section {
+            background: #242424;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #333;
+        }
+        .fs-exit-btn {
+            display: none;
+        }
+        .player-section:fullscreen,
+        .player-section:-webkit-full-screen,
+        .player-section.is-fullscreen-active {
+            margin: 0;
+            width: 100vw;
+            height: 100vh;
+            border: none;
+            border-radius: 0;
+            padding: 0;
+            background: #111;
+            position: relative;
+        }
+        .player-section:fullscreen .stream-container,
+        .player-section:-webkit-full-screen .stream-container,
+        .player-section.is-fullscreen-active .stream-container {
+            position: absolute;
+            inset: 0;
+            width: auto;
+            height: auto;
+            min-height: 0;
+            margin: 0;
+            border-radius: 0;
+        }
+        .player-section:fullscreen .stream-image,
+        .player-section:-webkit-full-screen .stream-image,
+        .player-section.is-fullscreen-active .stream-image {
+            position: absolute;
+            inset: 0;
+            display: block;
+            width: 100%;
+            height: 100%;
+            max-width: none;
+            max-height: none;
+            object-fit: fill;
+        }
+        .player-section:fullscreen .status,
+        .player-section:-webkit-full-screen .status,
+        .player-section.is-fullscreen-active .status {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            right: 12px;
+            z-index: 10;
+            margin: 0;
+            background: rgba(30, 30, 30, 0.7);
+            backdrop-filter: blur(4px);
+        }
+        .player-section:fullscreen .fs-exit-btn,
+        .player-section:-webkit-full-screen .fs-exit-btn,
+        .player-section.is-fullscreen-active .fs-exit-btn {
+            display: inline-flex;
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 20;
+            width: 40px;
+            height: 40px;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            border-radius: 999px;
+            font-size: 22px;
+            line-height: 1;
+            background: rgba(20, 20, 20, 0.78);
+            backdrop-filter: blur(4px);
+        }
+        .player-section:fullscreen .fs-exit-btn:hover,
+        .player-section:-webkit-full-screen .fs-exit-btn:hover,
+        .player-section.is-fullscreen-active .fs-exit-btn:hover {
+            background: rgba(50, 50, 50, 0.9);
+        }
+        .player-section:fullscreen .controls,
+        .player-section:-webkit-full-screen .controls,
+        .player-section.is-fullscreen-active .controls {
+            display: none;
+        }
+        .stream-container {
+            background: #000;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 300px;
+            transition: min-height 0.2s ease, border-radius 0.2s ease;
+        }
+        .stream-image { max-width: 100%; max-height: 600px; object-fit: contain; }
+        .container.theater .stream-container {
+            min-height: min(80vh, 1080px);
+            border-radius: 8px;
+        }
+        .container.theater .stream-image {
+            width: 100%;
+            max-height: min(80vh, 1080px);
+            object-fit: contain;
+        }
+
+        /* Keep fullscreen sizing authoritative even when theater mode class is present. */
+        .player-section:fullscreen .stream-image,
+        .player-section:-webkit-full-screen .stream-image,
+        .player-section.is-fullscreen-active .stream-image {
+            width: 100% !important;
+            height: 100% !important;
+            max-width: none !important;
+            max-height: none !important;
+            object-fit: fill !important;
+        }
+        .container.theater .player-section {
+            padding: 16px;
+        }
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px;
+            background: #2c2c2c;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        .status-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: #999;
+            flex-shrink: 0;
+        }
+        .status-dot.connected {
+            background: #4caf50;
+            box-shadow: 0 0 8px rgba(76,175,80,0.6);
+        }
+        .status-dot.error {
+            background: #f44336;
+            box-shadow: 0 0 8px rgba(244,67,54,0.6);
+        }
+        .controls { display: flex; gap: 10px; }
+        button {
+            padding: 10px 20px;
+            background: #2196f3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        button:hover { background: #1976d2; }
+        .mode-btn.active {
+            background: #43a047;
+        }
+        .mode-btn.active:hover {
+            background: #388e3c;
+        }
+        .error-text {
+            color: #f44336;
+            font-size: 13px;
+            margin-top: 10px;
+            display: none;
+        }
+        .error-text.show { display: block; }
+        @media (max-width: 768px) {
+            body { padding: 10px; }
+            h1 { font-size: 22px; margin-bottom: 12px; }
+            .player-section { padding: 12px; }
+            .stream-container { min-height: 220px; }
+            .controls { flex-wrap: wrap; }
+            button { padding: 9px 14px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="appContainer">
+        <h1>{APP_TITLE}</h1>
+        <div class="player-section" id="playerSection">
+            <button class="fs-exit-btn" id="fullscreenExitBtn" onclick="exitFullscreenMode()" aria-label="Exit fullscreen">&times;</button>
+            <div class="status">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Connecting…</span>
+                <span id="viewerBadge" style="margin-left:auto;font-size:12px;color:#999;"></span>
+            </div>
+            <div class="stream-container">
+                <img id="streamImage" class="stream-image" src="/stream" alt="Live stream">
+            </div>
+            <div class="controls">
+                <button onclick="reconnectStream()">Reconnect</button>
+                <button class="mode-btn active" id="modeNormalBtn" onclick="setSizeMode('normal')">Normal</button>
+                <button class="mode-btn" id="modeTheaterBtn" onclick="setSizeMode('theater')">Theater</button>
+                <button class="mode-btn" id="modeFullscreenBtn" onclick="toggleFullscreenMode()">Fullscreen</button>
+            </div>
+            <div class="error-text" id="errorText"></div>
+        </div>
+    </div>
+
+    <script>
+        const statusDot   = document.getElementById('statusDot');
+        const statusText  = document.getElementById('statusText');
+        const errorText   = document.getElementById('errorText');
+        const streamImg   = document.getElementById('streamImage');
+        const viewerBadge = document.getElementById('viewerBadge');
+        const appContainer = document.getElementById('appContainer');
+        const playerSection = document.getElementById('playerSection');
+        const fullscreenExitBtn = document.getElementById('fullscreenExitBtn');
+        const modeNormalBtn = document.getElementById('modeNormalBtn');
+        const modeTheaterBtn = document.getElementById('modeTheaterBtn');
+        const modeFullscreenBtn = document.getElementById('modeFullscreenBtn');
+
+        let autoRetryTimer = null;
+        let sizeMode = localStorage.getItem('sizeMode') || 'normal';
+
+        function isPlayerFullscreen() {
+            return document.fullscreenElement === playerSection || document.webkitFullscreenElement === playerSection;
+        }
+
+        function syncFullscreenState() {
+            playerSection.classList.toggle('is-fullscreen-active', isPlayerFullscreen());
+        }
+
+        function applyModeButtons(mode) {
+            modeNormalBtn.classList.toggle('active', mode === 'normal');
+            modeTheaterBtn.classList.toggle('active', mode === 'theater');
+            const isFs = isPlayerFullscreen();
+            modeFullscreenBtn.classList.toggle('active', isFs);
+            if (isFs) {
+                modeFullscreenBtn.textContent = 'Exit Fullscreen';
+            } else {
+                modeFullscreenBtn.textContent = 'Fullscreen';
+            }
+        }
+
+        function setSizeMode(mode) {
+            sizeMode = mode;
+            if (mode === 'theater') {
+                appContainer.classList.add('theater');
+            } else {
+                appContainer.classList.remove('theater');
+            }
+            localStorage.setItem('sizeMode', sizeMode);
+            applyModeButtons(sizeMode);
+        }
+
+        async function toggleFullscreenMode() {
+            try {
+                if (isPlayerFullscreen()) {
+                    if (document.exitFullscreen) {
+                        await document.exitFullscreen();
+                    } else if (document.webkitExitFullscreen) {
+                        document.webkitExitFullscreen();
+                    }
+                } else if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                    if (playerSection.requestFullscreen) {
+                        await playerSection.requestFullscreen();
+                    } else if (playerSection.webkitRequestFullscreen) {
+                        playerSection.webkitRequestFullscreen();
+                    }
+                } else {
+                    if (document.exitFullscreen) {
+                        await document.exitFullscreen();
+                    } else if (document.webkitExitFullscreen) {
+                        document.webkitExitFullscreen();
+                    }
+                    if (playerSection.requestFullscreen) {
+                        await playerSection.requestFullscreen();
+                    } else if (playerSection.webkitRequestFullscreen) {
+                        playerSection.webkitRequestFullscreen();
+                    }
+                }
+            } catch (_) {
+                // Ignore browser-specific fullscreen permission/runtime errors.
+            }
+            syncFullscreenState();
+            applyModeButtons(sizeMode);
+        }
+
+        async function exitFullscreenMode() {
+            if (isPlayerFullscreen()) {
+                try {
+                    if (document.exitFullscreen) {
+                        await document.exitFullscreen();
+                    } else if (document.webkitExitFullscreen) {
+                        document.webkitExitFullscreen();
+                    }
+                } catch (_) {
+                    // Ignore browser-specific fullscreen runtime errors.
+                }
+            }
+            syncFullscreenState();
+            applyModeButtons(sizeMode);
+        }
+
+        function setStatus(connected, message) {
+            if (connected) {
+                statusDot.className = 'status-dot connected';
+                statusText.textContent = 'Connected';
+                errorText.classList.remove('show');
+            } else {
+                statusDot.className = 'status-dot error';
+                statusText.textContent = 'Disconnected';
+                if (message) {
+                    errorText.textContent = message;
+                    errorText.classList.add('show');
+                }
+            }
+        }
+
+        function reconnectStream() {
+            clearTimeout(autoRetryTimer);
+            statusText.textContent = 'Reconnecting…';
+            streamImg.src = '/stream?t=' + Date.now();
+        }
+
+        streamImg.addEventListener('load', () => setStatus(true, ''));
+
+        streamImg.addEventListener('error', () => {
+            setStatus(false, 'Stream unavailable — retrying in 3 s…');
+            clearTimeout(autoRetryTimer);
+            autoRetryTimer = setTimeout(reconnectStream, 3000);
+        });
+
+        document.addEventListener('fullscreenchange', () => {
+            syncFullscreenState();
+            applyModeButtons(sizeMode);
+        });
+        document.addEventListener('webkitfullscreenchange', () => {
+            syncFullscreenState();
+            applyModeButtons(sizeMode);
+        });
+
+        syncFullscreenState();
+        setSizeMode(sizeMode);
+
+        // WebSocket for real-time stats (viewer count, upstream state).
+        function connectStatsWS() {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            const ws = new WebSocket(proto + '://' + location.host + '/ws/stats');
+
+            ws.onmessage = (e) => {
+                const d = JSON.parse(e.data);
+                const vc = d.viewer_count ?? 0;
+                viewerBadge.textContent = vc === 1 ? '1 viewer' : vc + ' viewers';
+                if (!d.upstream_connected && statusDot.className.includes('connected')) {
+                    setStatus(false, d.last_error || 'Upstream disconnected — waiting for reconnect…');
+                }
+            };
+
+            ws.onclose = () => { viewerBadge.textContent = ''; setTimeout(connectStatsWS, 3000); };
+            ws.onerror = () => ws.close();
+        }
+        connectStatsWS();
+    </script>
+</body>
+</html>

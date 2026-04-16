@@ -1,363 +1,243 @@
 # Bambu P2S Live Stream App
 
-A small, self-hosted web app that securely serves a Bambu P2S camera stream through a public HTTPS subdomain behind Cloudflare, maintaining minimal and stable printer connections.
+A small, self-hosted web app that securely serves a Bambu P2S camera stream through a public HTTPS subdomain behind Cloudflare. The backend maintains **one persistent upstream connection** and fans the stream out to all connected viewers, so the printer is never hit by multiple stream sessions.
 
 ## Architecture
 
 ```
 Bambu P2S Printer
+    ↓  (one connection, always)
+Our Stream App  ──  StreamManager background loop
+    ↓  (fan-out via per-viewer asyncio queues)
+Reverse Proxy (Cloudflare / k3s Ingress)
     ↓
-Our Stream App Backend (single upstream connection)
-    ↓
-Reverse Proxy (Cloudflare/Ingress)
-    ↓
-Remote Browser (multiple viewers)
+Remote Browsers  (N viewers, zero extra printer connections)
 ```
-
-**Design principle**: The app proxies one upstream stream to any number of viewers, avoiding multiple printer-side connections.
 
 ## Features
 
-- **Minimal**: ~200 lines of Python, no complex dependencies
-- **Cloudflare-friendly**: Proper no-cache headers, handles reconnects gracefully
-- **Stateless**: Containerized, no persistent session state
-- **Simple UI**: Built-in HTML5 player with auto-reconnect
-- **Robust logging**: Clear visibility into connection state
+- **Single upstream connection** – StreamManager keeps one HTTP stream open and distributes chunks to every viewer via asyncio queues.
+- **Exponential backoff reconnect** – delays: 1 s → 2 s → 5 s → 10 s → 30 s (max).
+- **Cloudflare-friendly** – no-cache / no-buffer headers, frontend auto-reconnects when Cloudflare drops the long-lived connection.
+- **Health + status endpoints** – real connection state, viewer count, reconnect count, last error.
+- **Minimal stack** – FastAPI + httpx + uvicorn, ~300 lines of Python total.
 
 ## Quick Start
 
 ### Local Development
 
-1. **Clone and setup:**
+```bash
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 
-   ```bash
-   cd /home/coder/dev/bambu-stream
-   python3.11 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
+STREAM_URL=http://PRINTER_IP:PORT/stream python app.py
+```
 
-2. **Run with mock upstream stream** (for testing):
-
-   ```bash
-   # Terminal 1: Start a simple test stream server
-   # (or point to real printer)
-   STREAM_URL=http://YOUR_PRINTER_IP:PORT/stream python app.py
-   ```
-
-3. **Access:**
-   - Player: `http://localhost:8000/`
-   - Health: `http://localhost:8000/health`
-   - Stream: `http://localhost:8000/stream`
+Open: `http://localhost:8000/`
 
 ### Docker
 
-1. **Build:**
+```bash
+# Build
+docker build -t bambu-stream:latest .
 
-   ```bash
-   docker build -t bambu-stream:latest .
-   ```
+# Run
+docker run -d \
+  -p 8000:8000 \
+  -e STREAM_URL=http://PRINTER_IP:PORT/stream \
+  -e APP_TITLE="Bambu P2S Live" \
+  -e LOG_LEVEL=INFO \
+  --name bambu-stream \
+  bambu-stream:latest
 
-2. **Run:**
-
-   ```bash
-   docker run -d \
-     -p 8000:8000 \
-     -e STREAM_URL=http://PRINTER_IP:PORT/stream \
-     -e APP_TITLE="Bambu P2S Live" \
-     -e LOG_LEVEL=INFO \
-     --name bambu-stream \
-     bambu-stream:latest
-   ```
-
-3. **Check logs:**
-   ```bash
-   docker logs -f bambu-stream
-   ```
+docker logs -f bambu-stream
+```
 
 ## Configuration
 
-### Required Environment Variables
+### Required
 
-| Variable     | Example                            | Description                                              |
-| ------------ | ---------------------------------- | -------------------------------------------------------- |
-| `STREAM_URL` | `http://192.168.1.100:8080/stream` | **Required.** Direct URL to printer's streaming endpoint |
+| Variable     | Example                            | Description                          |
+| ------------ | ---------------------------------- | ------------------------------------ |
+| `STREAM_URL` | `http://192.168.1.100:8080/stream` | URL of the upstream MJPEG stream     |
 
-### Optional Environment Variables
+### Optional
 
-| Variable                    | Default          | Description                            |
-| --------------------------- | ---------------- | -------------------------------------- |
-| `APP_TITLE`                 | `Bambu P2S Live` | Title shown in browser tab and page    |
-| `PORT`                      | `8000`           | Port to listen on                      |
-| `LOG_LEVEL`                 | `INFO`           | Log level: DEBUG, INFO, WARNING, ERROR |
-| `TZ`                        | `UTC`            | Timezone for logging                   |
-| `RECONNECT_INITIAL_SECONDS` | `1`              | Initial reconnect delay (Phase 2)      |
-| `RECONNECT_MAX_SECONDS`     | `30`             | Max reconnect delay (Phase 2)          |
-| `AUTO_RECONNECT`            | `true`           | Enable auto-reconnect (Phase 2)        |
+| Variable                    | Default          | Description                                    |
+| --------------------------- | ---------------- | ---------------------------------------------- |
+| `APP_TITLE`                 | `Bambu P2S Live` | Title shown in browser tab and page header     |
+| `PORT`                      | `8000`           | Listening port                                 |
+| `LOG_LEVEL`                 | `INFO`           | `DEBUG` / `INFO` / `WARNING` / `ERROR`         |
+| `TZ`                        | `UTC`            | Timezone for log timestamps                    |
+| `AUTO_RECONNECT`            | `true`           | Enable upstream reconnect loop                 |
+| `RECONNECT_INITIAL_SECONDS` | `1`              | First backoff delay (seconds)                  |
+| `RECONNECT_MAX_SECONDS`     | `30`             | Maximum backoff delay (seconds)                |
+| `IDLE_DISCONNECT_SECONDS`   | `300`            | Keep upstream alive after last viewer leaves   |
+| `MQTT_HOST`                 | ``               | Printer IP for local MQTT                      |
+| `MQTT_PORT`                 | `8883`           | Local MQTT TLS port                            |
+| `MQTT_SERIAL`               | ``               | Printer serial (used in MQTT topic)            |
+| `MQTT_ACCESS_CODE`          | ``               | Printer access code (MQTT password for `bblp`) |
+| `MQTT_TIMEOUT_SECONDS`      | `10`             | Probe timeout for `/debug/mqtt` and startup    |
+| `MQTT_TLS_INSECURE`         | `true`           | Disable cert verification for printer TLS cert |
+| `MQTT_TLS_CA_CERT`          | ``               | Optional CA cert path for MQTT TLS verification |
 
 ### Bambu P2S Stream URL
 
-Find your printer's stream endpoint:
+The P2S camera uses **RTSPS** (RTSP over TLS on port 322). Set `STREAM_URL` to:
 
-- **Direct MJPEG**: `http://PRINTER_IP:8080/mjpegfeed`
-- **Bambu P2S port**: Check your printer's LAN settings
-- **go2rtc output** (if using): `http://go2rtc-host:8554/api/frame.mjpg?src=bambu`
+```
+rtsps://bblp:{ACCESS_CODE}@{PRINTER_IP}:322/streaming/live/1
+```
+
+The app connects via FFmpeg (bundled in the Docker image), so no extra tools are needed. TLS verification is disabled automatically to accept the printer's self-signed certificate.
+
+**Alternative** — if you already run go2rtc or another MJPEG bridge:
+
+```
+http://go2rtc-host:1984/api/frame.mjpg?src=bambu
+```
+
+> ⚠️ Treat your access code like a password — do not commit it to source control.
 
 ## Endpoints
 
-### `GET /`
-
-Main player page with embedded HTML5 viewer and reconnect button.
-
-**Response**: HTML page with:
-
-- Stream player
-- Connection status indicator
-- Manual reconnect button
-- Auto-reconnect on error
-
 ### `GET /health`
-
-Health check endpoint.
-
-**Response**:
 
 ```json
 {
   "ok": true,
   "stream_configured": true,
   "upstream_connected": true,
-  "app_version": "0.1.0",
+  "app_version": "0.2.0",
   "uptime_seconds": 123,
   "timestamp": "2025-04-15T10:30:45.123456"
 }
 ```
 
+`upstream_connected` reflects the real state of the StreamManager background connection.
+
+### `GET /`
+
+Player page: MJPEG `<img>`, status dot, reconnect button, `/health` polling every 5 s.
+
+Theater layout note: theater mode caps page width at `1952px`, which is `1920px` stream area plus `16px` horizontal padding on each side (`2 x 16`).
+
 ### `GET /stream`
 
-Live stream endpoint (primary endpoint for viewers).
+Live stream proxy. Subscribes the viewer to the shared upstream queue.
 
-**Headers**:
+Headers:
+```
+Cache-Control: no-store, no-cache, must-revalidate, no-transform
+Pragma: no-cache
+X-Accel-Buffering: no
+```
 
-- `Cache-Control: no-store, no-cache, must-revalidate, no-transform`
-- `Pragma: no-cache`
-- `Content-Type: multipart/x-mixed-replace; boundary=frame` (MJPEG)
+Returns 500 JSON if `STREAM_URL` is not configured.
 
-**Response**: Continuous binary stream from printer
+### `GET /status`
 
-**Error handling**:
-
-- Returns 500 if `STREAM_URL` not configured
-- Auto-retries on upstream connection failure
-- Frontend auto-reconnects on stream disconnect
-
-### `GET /status` (Optional)
-
-Extended status endpoint for debugging.
-
-**Response**:
+Extended debug endpoint:
 
 ```json
 {
   "stream_configured": true,
-  "stream_url_masked": "http://***@192.168.1.100:8080/stream",
+  "stream_url_masked": "http://192.168.1.100:8080/stream",
+  "upstream_connected": true,
+  "viewer_count": 2,
+  "reconnect_count": 0,
+  "last_error": null,
+  "content_type": "multipart/x-mixed-replace; boundary=frame",
   "uptime_seconds": 456,
   "timestamp": "2025-04-15T10:30:45.123456",
-  "app_version": "0.1.0"
+  "app_version": "0.2.0"
 }
 ```
 
+### `GET /debug/mqtt`
+
+Runs a one-shot MQTT probe similar to HA's request flow:
+
+- Subscribes to `device/{serial}/report`
+- Publishes `get_version` and `pushall` to `device/{serial}/request`
+- Parses `print.ipcam.rtsp_url` from responses
+
+Response includes:
+
+- `discovered_rtsp_url`
+- `message_count`
+- up to 5 sample payloads
+- masked probe config and error details (if any)
+
+When MQTT returns an RTSP/RTSPS URL without credentials, the app rewrites it to include `bblp:{MQTT_ACCESS_CODE}@...` before using it.
+
+If `STREAM_URL` is not set and MQTT config is present (`MQTT_HOST`, `MQTT_SERIAL`, `MQTT_ACCESS_CODE`), the app runs this probe once on startup, auto-sets `STREAM_URL` when `rtsp_url` is found, then closes MQTT.
+
+If you want strict TLS validation for MQTT, set `MQTT_TLS_INSECURE=false` and provide `MQTT_TLS_CA_CERT` (for example, a local copy of the HA cert file). This affects MQTT probing only.
+
+If strict MQTT TLS validation fails with a certificate verification error, the app automatically retries discovery once with insecure TLS and logs a warning.
+
 ## Logging
 
-The app logs these key events (with no secrets exposed):
-
-- **Startup**: App initialization, configuration status
-- **Stream state**: Connection attempts, upstream errors, disconnects
-- **Client activity**: Stream requests, errors
-
-Example logs:
+Key events logged (no secrets / no auth tokens):
 
 ```
-2025-04-15 10:30:01 - bambu_stream_app - INFO - Bambu P2S Stream App starting
-2025-04-15 10:30:01 - bambu_stream_app - INFO - APP_TITLE=Bambu P2S Live
-2025-04-15 10:30:01 - stream_manager - INFO - Stream configured: http://***@192.168.1.100:8080/...
-2025-04-15 10:30:05 - bambu_stream_app - INFO - Stream request received from client
-2025-04-15 10:30:05 - bambu_stream_app - INFO - Connecting to upstream stream: http://***@192.168.1.100:8080/...
-2025-04-15 10:30:06 - bambu_stream_app - INFO - Upstream connection established, streaming to client
+INFO  - Bambu P2S Stream App starting
+INFO  - STREAM_URL configured: http://192.168.1.100:8080/stream
+INFO  - StreamManager starting upstream loop
+INFO  - Connecting to upstream: http://192.168.1.100:8080/stream (reconnect count: 0)
+INFO  - Upstream connected  content-type=multipart/x-mixed-replace; boundary=frame
+INFO  - Viewer 0 connected (active viewers: 1)
+INFO  - Viewer 0 disconnected (remaining viewers: 0)
+ERROR - Upstream error: Connection refused
+INFO  - Reconnecting in 2s (attempt #1)…
 ```
 
-## Deployment with k3s/Ingress
+## Deployment with k3s / Ingress
 
-1. **Create ConfigMap** (optional, for env vars):
+The ingress, service, DNS, and Cloudflare proxy are managed separately. The app only needs a `Deployment` pointing at the container image with the env vars above.
 
-   ```yaml
-   apiVersion: v1
-   kind: ConfigMap
-   metadata:
-     name: bambu-stream-config
-     namespace: default
-   data:
-     STREAM_URL: "http://printer-internal-ip:8080/stream"
-     APP_TITLE: "Bambu P2S Live"
-     LOG_LEVEL: "INFO"
-   ```
+Suggested resource limits:
 
-2. **Create Deployment**:
+```yaml
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+```
 
-   ```yaml
-   apiVersion: apps/v1
-   kind: Deployment
-   metadata:
-     name: bambu-stream
-     namespace: default
-   spec:
-     replicas: 1
-     selector:
-       matchLabels:
-         app: bambu-stream
-     template:
-       metadata:
-         labels:
-           app: bambu-stream
-       spec:
-         containers:
-           - name: app
-             image: bambu-stream:latest
-             ports:
-               - containerPort: 8000
-             envFrom:
-               - configMapRef:
-                   name: bambu-stream-config
-             resources:
-               requests:
-                 cpu: 100m
-                 memory: 128Mi
-               limits:
-                 cpu: 500m
-                 memory: 256Mi
-   ```
+## Cloudflare Notes
 
-3. **Create Service**:
-
-   ```yaml
-   apiVersion: v1
-   kind: Service
-   metadata:
-     name: bambu-stream
-     namespace: default
-   spec:
-     selector:
-       app: bambu-stream
-     ports:
-       - protocol: TCP
-         port: 80
-         targetPort: 8000
-   ```
-
-4. **Create Ingress** (behind Cloudflare):
-   ```yaml
-   apiVersion: networking.k8s.io/v1
-   kind: Ingress
-   metadata:
-     name: bambu-stream
-     namespace: default
-   spec:
-     rules:
-       - host: printer.example.com
-         http:
-           paths:
-             - path: /
-               pathType: Prefix
-               backend:
-                 service:
-                   name: bambu-stream
-                   port:
-                     number: 80
-   ```
-
-## Cloudflare Configuration
-
-Ensure Cloudflare is configured to:
-
-1. **Proxy** the subdomain (e.g., `printer.example.com`)
-2. **Allow long-lived connections** (HTTP streaming)
-3. **Firewall rules** permit only Cloudflare IP ranges to reach your origin
-4. **SSL/TLS**: Full (strict) encryption mode recommended
-
-The app handles session interruptions gracefully—the frontend will auto-reconnect.
-
-## Known Limitations (MVP / Phase 1)
-
-### Current
-
-- Each viewer may create a separate connection to the printer (acceptable for small viewer counts)
-- No persistent upstream connection maintained
-- Simple MJPEG transport (may need WebSocket/WebRTC in future if Cloudflare issues arise)
-
-### Future Phases (Phase 2+)
-
-- **Phase 2**: Single shared upstream connection with fan-out to all viewers
-- **Phase 3**: Optional WebSocket or WebRTC for better Cloudflare compatibility
+- Enable **proxy** on the subdomain.
+- Set SSL/TLS to **Full (strict)**.
+- The frontend auto-reconnects when Cloudflare interrupts the long-lived stream connection (expected behaviour).
+- Firewall rules should allow only Cloudflare IP ranges to reach the origin.
 
 ## Troubleshooting
 
-### `/stream` returns 500
-
-- **Check**: `STREAM_URL` is set and printer endpoint is reachable
-- **Command**: `curl -v http://PRINTER_IP:8080/stream` (from the app container)
-
-### Stream shows "Disconnected" in UI
-
-- **Check logs**: `docker logs bambu-stream`
-- **Verify**: Printer is online and streaming endpoint is accessible
-- **Retry**: Click the "Reconnect" button
-
-### High CPU/memory usage
-
-- **Phase 1 limitation**: Multiple viewers = multiple printer connections
-- **Phase 2 will fix**: Implement shared upstream + fan-out
-
-## Development & Contributing
-
-### Testing locally without a printer:
+| Symptom | Check |
+| ------- | ----- |
+| `/stream` returns 500 | `STREAM_URL` set? Printer reachable? |
+| `upstream_connected: false` in `/health` | Check `/status` for `last_error`; verify printer is on |
+| Stream freezes / shows stale frame | Click Reconnect; check `reconnect_count` in `/status` |
+| High memory | Shouldn't happen — one upstream; check viewer count in `/status` |
+| `FFmpeg stderr: Option tls_verify not found.` | Old cached process/config; current app no longer passes `-tls_verify` |
 
 ```bash
-# 1. Start a dummy MJPEG server (e.g., using mjpeg-streamer or similar)
-# OR use a public test stream:
-STREAM_URL=http://demo.embedded.com/mjpg/video.mjpg python app.py
-
-# 2. Open http://localhost:8000/
-# 3. Verify:
-#    - Player loads
-#    - Status shows "Connected"
-#    - Logs show stream activity
+# Test printer endpoint directly from inside the container:
+curl -v http://PRINTER_IP:PORT/stream
 ```
 
-### Running tests:
+## Known Limitations
 
-```bash
-# Add pytest and run unit tests (future)
-# For now, manual testing with curl:
-curl -v http://localhost:8000/health
-curl -v http://localhost:8000/status
-```
-
-## Security
-
-- **No auth in this app**: Auth is handled by your reverse proxy (Cloudflare, Ingress)
-- **No secrets logged**: URLs are masked in logs
-- **No direct printer exposure**: Only the app is public-facing
-- **Cloudflare protection**: All requests go through Cloudflare before reaching your origin
+- **MJPEG only**: transport is HTTP MJPEG. If Cloudflare proves problematic for long-lived connections, Phase 3 would add WebSocket or WebRTC delivery (same backend, same UI path).
+- **Single-instance only**: fan-out is in-process; horizontal scaling would require a shared pub/sub broker.
+- **No auth in this app**: authentication is delegated to the Cloudflare / ingress layer.
 
 ## License
 
-MIT (or choose your own)
-
-## Support
-
-For issues, questions, or contributions:
-
-1. Check logs: `docker logs bambu-stream`
-2. Verify `STREAM_URL` is correct
-3. Test printer endpoint directly: `curl http://PRINTER_IP:8080/stream`
-4. Review this README's troubleshooting section
+MIT
