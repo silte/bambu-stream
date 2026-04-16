@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy app code
 COPY app.py .
 COPY stream_manager.py .
+COPY mqtt_probe.py .
 COPY index.html .
 COPY error.html .
 

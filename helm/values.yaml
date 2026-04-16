@@ -1,0 +1,67 @@
+application:
+  name: bambu-stream
+  namespace: bambu-stream
+  type: NodePort
+
+  image:
+    registry: ghcr.io
+    repository: silte/bambu-stream
+    tag: latest
+
+  ingress:
+    enabled: true
+    host: 3d.silte.fi
+    blockedPaths: []
+    port: 8000
+    basicAuth:
+      enabled: true
+      secretName: http-basic-auth
+
+  nodeEnv: production
+  cloudEnv: production
+  logLevel: info
+  noColor: true
+
+  replicaCount: 1
+
+  healthCheck:
+    path: /health
+
+  k8sProbes:
+    liveness:
+      timeoutSeconds: 4
+      periodSeconds: 5
+      successThreshold: 1
+      failureThreshold: 5
+    readiness:
+      timeoutSeconds: 4
+      periodSeconds: 5
+      successThreshold: 1
+      failureThreshold: 2
+    startup:
+      initialDelaySeconds: 2
+      timeoutSeconds: 4
+      periodSeconds: 5
+      successThreshold: 1
+      failureThreshold: 10
+
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+  env:
+    APP_TITLE: Bambu P2S Live
+    LOG_LEVEL: INFO
+    PORT: "8000"
+    AUTO_RECONNECT: "true"
+    RECONNECT_INITIAL_SECONDS: "1"
+    RECONNECT_MAX_SECONDS: "30"
+    IDLE_DISCONNECT_SECONDS: "300"
+    MQTT_TLS_CA_CERT: "/app/bambu_p2s_250626.cert"
+
+  secrets:
+    - bambu-stream-secrets

@@ -56,11 +56,12 @@ docker logs -f bambu-stream
 
 ## Configuration
 
-### Required
+### Required (one of)
 
-| Variable     | Example                            | Description                          |
-| ------------ | ---------------------------------- | ------------------------------------ |
-| `STREAM_URL` | `http://192.168.1.100:8080/stream` | URL of the upstream MJPEG stream     |
+| Option | Variables | Description |
+| ------ | --------- | ----------- |
+| Direct stream URL | `STREAM_URL` | URL of upstream stream (`http://...` or `rtsps://...`) |
+| MQTT auto-discovery (preferred) | `MQTT_SERIAL`, `MQTT_ACCESS_CODE`, `MQTT_HOST` | App discovers RTSP URL from printer MQTT on startup |
 
 ### Optional
 
@@ -81,6 +82,8 @@ docker logs -f bambu-stream
 | `MQTT_TIMEOUT_SECONDS`      | `10`             | Probe timeout for `/debug/mqtt` and startup    |
 | `MQTT_TLS_INSECURE`         | `true`           | Disable cert verification for printer TLS cert |
 | `MQTT_TLS_CA_CERT`          | ``               | Optional CA cert path for MQTT TLS verification |
+
+For Kubernetes, prefer secret keys: `MQTT_SERIAL`, `MQTT_ACCESS_CODE`, `MQTT_HOST`, `MQTT_TLS_INSECURE`, `MQTT_TLS_CA_CERT`.
 
 ### Bambu P2S Stream URL
 
