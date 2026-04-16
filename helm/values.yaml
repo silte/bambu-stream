@@ -63,6 +63,7 @@ application:
     IDLE_DISCONNECT_SECONDS: "300"
     MQTT_TLS_CA_CERT: "/app/bambu_p2s_250626.cert"
     MQTT_TLS_INSECURE: "false"
+    MQTT_TLS_ALLOW_INSECURE_FALLBACK: "true"
 
   secrets:
     - bambu-stream-secrets
